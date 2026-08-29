@@ -27,3 +27,4 @@ dist/
 data/inbox.jsonl
 data/feed.json
 data/events.jsonl
+data/runtime-state.json

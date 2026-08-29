@@ -31,6 +31,7 @@ export type BotState = {
   homeY: number;
   destX: number;
   destY: number;
+  walkingTo: BotId | null;
   speech: string | null;
   lastEventAt: string | null;
 };

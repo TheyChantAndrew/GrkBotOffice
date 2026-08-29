@@ -1,14 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  openSync,
-  readSync,
-  closeSync,
-  statSync,
-  readFileSync,
-  appendFileSync,
-  writeFileSync
-} from "node:fs";
+import { existsSync, mkdirSync, openSync, readSync, closeSync, statSync, readFileSync, appendFileSync } from "node:fs";
 import path from "node:path";
 import { BOT_IDS, isBotId, isEventType, type BotId, type BotState, type OfficeEvent, type OfficeState } from "./types";
 import { createBot, HOME_DESKS } from "./office";
@@ -17,11 +7,10 @@ const DATA_DIR = path.join(process.cwd(), "data");
 const INBOX_PATH = path.join(DATA_DIR, "inbox.jsonl");
 const FEED_PATH = path.join(DATA_DIR, "feed.json");
 const EVENTS_PATH = path.join(DATA_DIR, "events.jsonl");
-const RUNTIME_PATH = path.join(DATA_DIR, "runtime-state.json");
 
-export const WALK_SPEED = 0.22;
+const WALK_SPEED = 0.28;
 const ARRIVE_EPS = 0.01;
-const TALK_HOLD_MS = 20000;
+const TALK_HOLD_MS = 9000;
 const MAX_EVENTS = 200;
 
 type InternalBot = BotState & { returnAt: number | null };
@@ -50,74 +39,27 @@ function emptyMemory(): Memory {
 
 const globalStore = globalThis as typeof globalThis & { __fambashOffice?: Memory };
 
+function memory(): Memory {
+  if (!globalStore.__fambashOffice) {
+    globalStore.__fambashOffice = emptyMemory();
+    loadPersistedEvents();
+  }
+  return globalStore.__fambashOffice;
+}
+
 function ensureDataDir() {
   if (!existsSync(DATA_DIR)) {
     mkdirSync(DATA_DIR, { recursive: true });
   }
 }
 
-function hydrateBot(raw: InternalBot): InternalBot {
-  const base = createBot(raw.id);
-  return {
-    ...base,
-    ...raw,
-    walkingTo: raw.walkingTo ?? null,
-    returnAt: raw.returnAt ?? null
-  };
-}
-
-function readSnapshot(): Memory | null {
-  if (!existsSync(RUNTIME_PATH)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(RUNTIME_PATH, "utf8")) as Memory;
-    const mem = emptyMemory();
-    mem.lastTick = typeof parsed.lastTick === "number" ? parsed.lastTick : Date.now();
-    mem.inboxOffset = typeof parsed.inboxOffset === "number" ? parsed.inboxOffset : 0;
-    mem.feedHash = typeof parsed.feedHash === "string" ? parsed.feedHash : "";
-    mem.events = Array.isArray(parsed.events) ? parsed.events.filter((e) => normalizeEvent(e)) : [];
-    for (const id of BOT_IDS) {
-      if (parsed.bots?.[id]) mem.bots[id] = hydrateBot(parsed.bots[id]);
-    }
-    return mem;
-  } catch {
-    return null;
-  }
-}
-
-function writeSnapshot(mem: Memory) {
-  ensureDataDir();
-  writeFileSync(RUNTIME_PATH, JSON.stringify(mem), "utf8");
-}
-
-function loadEventLogOnly(mem: Memory) {
+function loadPersistedEvents() {
   if (!existsSync(EVENTS_PATH)) return;
   const lines = readFileSync(EVENTS_PATH, "utf8").split(/\r?\n/);
   for (const line of lines) {
     const event = parseEventLine(line);
-    if (event) mem.events.push(event);
+    if (event) applyEvent(event, { persist: false });
   }
-  if (mem.events.length > MAX_EVENTS) {
-    mem.events.splice(0, mem.events.length - MAX_EVENTS);
-  }
-}
-
-function memory(): Memory {
-  if (!globalStore.__fambashOffice) {
-    globalStore.__fambashOffice = readSnapshot() ?? emptyMemory();
-    if (!existsSync(RUNTIME_PATH)) {
-      loadEventLogOnly(globalStore.__fambashOffice);
-    }
-  }
-  return globalStore.__fambashOffice;
-}
-
-function syncFromDisk() {
-  const disk = readSnapshot();
-  if (disk) {
-    globalStore.__fambashOffice = disk;
-    return;
-  }
-  memory();
 }
 
 function persistEvent(event: OfficeEvent) {
@@ -155,20 +97,6 @@ export function normalizeEvent(raw: unknown): OfficeEvent | null {
   return event;
 }
 
-function deskOwner(x: number, y: number): BotId | null {
-  for (const id of BOT_IDS) {
-    const desk = HOME_DESKS[id];
-    if (Math.hypot(x - desk.x, y - desk.y) < 0.04) return id;
-  }
-  return null;
-}
-
-function refreshWalkMeta(bot: InternalBot) {
-  const destOwner = deskOwner(bot.destX, bot.destY);
-  const atHome = Math.hypot(bot.destX - bot.homeX, bot.destY - bot.homeY) < ARRIVE_EPS;
-  bot.walkingTo = atHome || destOwner === bot.id ? null : destOwner;
-}
-
 function advanceBots(now = Date.now()) {
   const mem = memory();
   const dt = Math.min(0.25, Math.max(0, (now - mem.lastTick) / 1000));
@@ -185,7 +113,6 @@ function advanceBots(now = Date.now()) {
       bot.x += dx * t;
       bot.y += dy * t;
       bot.status = "walking";
-      refreshWalkMeta(bot);
       continue;
     }
 
@@ -197,11 +124,9 @@ function advanceBots(now = Date.now()) {
       bot.destY = bot.homeY;
       bot.returnAt = null;
       bot.status = "walking";
-      refreshWalkMeta(bot);
       continue;
     }
 
-    refreshWalkMeta(bot);
     const atHome = Math.hypot(bot.x - bot.homeX, bot.y - bot.homeY) < ARRIVE_EPS;
     if (atHome && !bot.speech) {
       bot.status = "idle";
@@ -215,7 +140,6 @@ function sendHome(bot: InternalBot) {
   bot.destX = bot.homeX;
   bot.destY = bot.homeY;
   bot.returnAt = null;
-  refreshWalkMeta(bot);
 }
 
 function applyEvent(event: OfficeEvent, opts: { persist: boolean }) {
@@ -240,7 +164,6 @@ function applyEvent(event: OfficeEvent, opts: { persist: boolean }) {
     walker.returnAt = Date.now() + TALK_HOLD_MS;
     walker.lastEventAt = event.at;
     walker.status = "walking";
-    refreshWalkMeta(walker);
   }
 
   if (event.type !== "talk" && event.type !== "idle") {
@@ -253,7 +176,6 @@ function applyEvent(event: OfficeEvent, opts: { persist: boolean }) {
   }
 
   if (opts.persist) persistEvent(event);
-  writeSnapshot(mem);
 }
 
 function ingestInbox() {
@@ -281,7 +203,6 @@ function ingestInbox() {
     if (event) applyEvent(event, { persist: true });
   }
   mem.inboxOffset += consumed;
-  writeSnapshot(mem);
 }
 
 function ingestFeed() {
@@ -311,7 +232,6 @@ export function recordEvent(raw: unknown): { event: OfficeEvent } | { error: str
         "Expected { botId: value|sideline|fambash|building-manager, type: status|report|talk|idle, text?, targetBotId?, at? }"
     };
   }
-  syncFromDisk();
   ingestInbox();
   ingestFeed();
   applyEvent(event, { persist: true });
@@ -319,12 +239,10 @@ export function recordEvent(raw: unknown): { event: OfficeEvent } | { error: str
 }
 
 export function getState(): OfficeState {
-  syncFromDisk();
   ingestInbox();
   ingestFeed();
   advanceBots();
   const mem = memory();
-  writeSnapshot(mem);
   return {
     bots: BOT_IDS.map((id) => {
       const bot = mem.bots[id];

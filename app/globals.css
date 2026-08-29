@@ -65,7 +65,7 @@ input {
   position: absolute;
   width: 11.5%;
   transform: translate(-50%, -88%);
-  transition: left 160ms linear, top 160ms linear;
+  transition: none;
   pointer-events: none;
 }
 

@@ -50,6 +50,7 @@ export function createBot(id: BotId): BotState {
     homeY: home.y,
     destX: home.x,
     destY: home.y,
+    walkingTo: null,
     speech: null,
     lastEventAt: null
   };
