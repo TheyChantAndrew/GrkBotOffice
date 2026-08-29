@@ -1,0 +1,9 @@
+[
+  {
+    "botId": "fambash",
+    "type": "talk",
+    "text": "Need the latest rankings.",
+    "targetBotId": "value",
+    "at": "2026-08-29T16:00:00.000Z"
+  }
+]
