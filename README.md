@@ -66,3 +66,4 @@ See `data/feed.example.json` for a sample payload.
 - `public/office-pixel-bg.png` — isometric floor
 - `public/bot-sprites.png` — FamBash, Value, Sideline, Building Manager (left to right)
 - `public/sprites/` — cropped transparent sprites used on the floor
+# TEST README
